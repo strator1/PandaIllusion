@@ -1,0 +1,1006 @@
+<html>
+  <head>
+    <title>Panda Illusion</title>
+
+    <link rel="stylesheet" type="text/css" href="image-picker.css"/>
+    <link rel="stylesheet" type="text/css" href="panda.css"/>
+    <link rel="stylesheet" type="text/css" href="contextMenu.css"/>
+    <link rel="stylesheet" type="text/css" href="jquery.dataTables.min.css"/>
+
+    <script type="text/javascript" src="sugar.min.js"></script>
+    <script type="text/javascript" src="jquery.min.js"></script>
+    <script type="text/javascript" src="jquerymy-1.2.14.min.js"></script>
+    <script type="text/javascript" src="util.js"></script>
+    <script type="text/javascript" src="image-picker.min.js"></script>
+    <script type="text/javascript" src="StackBlur.js"></script>
+    <script type="text/javascript" src="glur.js"></script>
+    <script type="text/javascript" src="PropertyChangeSupport.js"></script>
+    <script type="text/javascript" src="pwm.js"></script>
+    <script type="text/javascript" src="fourier.js"></script>
+    <script type="text/javascript" src="plotly-1.2.0.min.js"></script>
+    <script type="text/javascript" src="contextMenu.min.js"></script>
+    <script type="text/javascript" src="FileSaver.min.js"></script>
+    <script type="text/javascript" src="jquery.dataTables.min.js"></script>
+
+    <script type="text/javascript">
+      const panda = {
+        _img : null,
+        _original_img : null,
+        _duty_off : 50,
+        _duty_on : 60,
+        _Pcarrier : 20,
+        _angle : 90,
+        _ratio: 4,
+        _zoom: 100,
+        _fgcolor : "#000000",
+        _bgcolor : "#ffffff"
+      }
+
+      const processing =  {
+        _diskDiameter : 0,
+        _gaussianKernelRadius : 0,
+        _lowpassThreshold : 0,
+        _summationDiameter: 0,
+        _posY : 0,
+        _blurType : "defocus",
+        _pupilDiameter : 8
+      }
+
+      const config = {
+        _distance : 100,
+        _length : 13.5,
+        _lengthpx : 512,
+        _lock_zoom: true
+      }
+
+      PropertyChangeSupport(panda);
+      PropertyChangeSupport(processing);
+      PropertyChangeSupport(config);
+
+      panda.addListener((key, newValue, oldValue) => {
+        if (newValue != null) {
+          const img = newValue;
+          
+          signalCanvas.width = img.naturalWidth;
+          signalCanvas.height = img.naturalHeight
+          signalCanvasOverlay.width = img.naturalWidth;
+          signalCanvasOverlay.height = img.naturalHeight;
+          signalCanvasParent.width = img.naturalWidth;
+          signalCanvasParent.height = img.naturalHeight;
+          signalCanvasParent.style.height = img.naturalHeight;
+          pwmCanvas.width = img.naturalWidth;
+          pwmCanvas.height = img.naturalHeight;
+          pwmCanvasOverlay.width = img.naturalWidth;
+          pwmCanvasOverlay.height = img.naturalHeight;
+          pwmCanvasParent.width = img.naturalWidth;
+          pwmCanvasParent.height = img.naturalHeight;
+          pwmCanvasParent.style.height = img.naturalHeight;
+          blurCanvas.width = img.naturalWidth;
+          blurCanvas.height = img.naturalHeight;
+          blurCanvasOverlay.width = img.naturalWidth;
+          blurCanvasOverlay.height = img.naturalHeight;
+          blurCanvasParent.width = img.naturalWidth;
+          blurCanvasParent.height = img.naturalHeight;
+          blurCanvasParent.style.height = img.naturalHeight;
+          odogCanvas.width = img.naturalWidth;
+          odogCanvas.height = img.naturalHeight;
+          odogSpinner.width = img.naturalWidth;
+          odogSpinner.height = img.naturalHeight;
+          odogCanvasParent.width = img.naturalWidth;
+          odogCanvasParent.height = img.naturalHeight;
+          odogCanvasParent.style.height = img.naturalHeight;
+
+          const ctx = signalCanvas.getContext("2d");
+          ctx.imageSmoothingEnabled = false;
+          ctx.fillStyle = "white";
+          ctx.fillRect(0, 0, signalCanvas.width, signalCanvas.height);
+          ctx.drawImage(img, 0, 0);
+
+          processing.posY = img.naturalHeight / 2;
+
+          $('#spinner').show();
+
+          setTimeout(async () => {
+            drawPWM();
+            blur();
+
+            plotPWM(processing.posY);
+            plotBlur(processing.posY);
+            plotCarrierSignal(processing.posY);
+
+            const ftSignalData = await ft('signalCanvas', 'signalFourierPlot');
+            ftPlot(ftSignalData, signalCanvas.width, panda.Pcarrier, 'signalFTPlot', config);
+
+            const ftPwmData = await ft('pwmCanvas', 'pwmFourierPlot');
+            ftPlot(ftPwmData, pwmCanvas.width, panda.Pcarrier, 'pwmFTPlot', config);
+            ftAmplitudes(ftPwmData, panda, "#pwmAmplitudesTable");
+
+            const ftBlurData = await ft('blurCanvas', 'blurFourierPlot');
+            ftPlot(ftBlurData, blurCanvas.width, panda.Pcarrier, 'blurFTPlot', config);
+
+            $("#PWMform").my("disabled", false);
+            $("#blurForm").my("disabled", false);
+
+            $('#spinner').hide();
+          }, 10);
+
+          $('#signalCanvasOverlay').click(function(e) { processing.posY = e.pageY - $(this).parent().position().top; });
+        } else {
+          clear();
+
+          $('#signalCanvasOverlay').off('click');
+
+          $("#PWMform").my("disabled", true);
+          $("#blurForm").my("disabled", true);
+          $("#zoomForm").my("disabled", true);
+        }
+      }, "img");
+
+      panda.addListener(async (key, newValue, oldValue) => {
+        $('#spinner').show();
+
+        setTimeout(async () => {
+          if (config.lock_zoom) {
+            panda.zoom = (newValue / oldValue) * panda.zoom;
+          } else {
+            drawPWM();
+            blur();
+
+            plotCarrierSignal(processing.posY);
+            plotPWM(processing.posY);
+            plotBlur(processing.posY);
+
+            const ftPwmData = await ft('pwmCanvas', 'pwmFourierPlot');
+            ftPlot(ftPwmData, pwmCanvas.width, panda.Pcarrier, 'pwmFTPlot', config);
+            ftAmplitudes(ftPwmData, panda, "#pwmAmplitudesTable");
+
+            const ftBlurData = await ft('blurCanvas', 'blurFourierPlot');
+            ftPlot(ftBlurData, blurCanvas.width, panda.Pcarrier, 'blurFTPlot', config);
+          }
+
+          $('#spinner').hide();
+        }, 10);
+      }, "Pcarrier");
+
+      panda.addListener(async (key, newValue, oldValue) => {
+        $('#spinner').show();
+
+        setTimeout(async () => {
+          drawPWM();
+          blur();
+
+          plotCarrierSignal(processing.posY);
+          plotPWM(processing.posY);
+          plotBlur(processing.posY);
+
+          const ftPwmData = await ft('pwmCanvas', 'pwmFourierPlot');
+          ftPlot(ftPwmData, pwmCanvas.width, panda.Pcarrier, 'pwmFTPlot', config);
+          ftAmplitudes(ftPwmData, panda, "#pwmAmplitudesTable");
+
+          const ftBlurData = await ft('blurCanvas', 'blurFourierPlot');
+          ftPlot(ftBlurData, blurCanvas.width, panda.Pcarrier, 'blurFTPlot', config);
+
+          $('#spinner').hide();
+        }, 10);
+      }, "duty_on", "duty_off", "angle", "ratio");
+
+      panda.addListener(async (key, newValue, oldValue) => {
+        $('#spinner').show();
+
+        setTimeout(async () => {
+          drawPWM();
+          blur();
+          plotBlur(processing.posY);
+
+          plotCarrierSignal(processing.posY);
+
+          const ftBlurData = await ft('blurCanvas', 'blurFourierPlot');
+          ftPlot(ftBlurData, blurCanvas.width, panda.Pcarrier, 'blurFTPlot', config);
+
+          $('#spinner').hide();
+        }, 10);
+      }, "fgcolor", "bgcolor");
+
+      panda.addListener((key, newValue, oldValue) => {
+          setTimeout(async () => {
+            zoom(panda, newValue / 100.0);
+          }, 10);
+      }, "zoom");
+
+      processing.addListener(async (key, newValue, oldValue) => {
+        $('#spinner').show();
+
+        setTimeout(async () => {
+          if (key == 'diskDiameter') {
+            lensBlur(newValue);
+          } else if (key == 'gaussianKernelRadius') {
+            gaussianBlur(newValue);
+          } else if (key == 'summationDiameter') {
+            summationBlur(newValue);
+          } else if (key == 'lowpassThreshold') {
+            lowPass(newValue);
+          }
+
+          plotBlur(processing.posY);
+
+          const ftBlurData = await ft('blurCanvas', 'blurFourierPlot');
+          ftPlot(ftBlurData, blurCanvas.width, panda.Pcarrier, 'blurFTPlot', config);
+
+          $('#spinner').hide();
+        }, 10);
+      }, "diskDiameter", "gaussianKernelRadius", "lowpassThreshold", "summationDiameter");
+
+      processing.addListener(async (key, newValue, oldValue) => {
+        plotSignal(newValue);
+        plotCarrierSignal(newValue);
+        plotPWM(newValue);
+        plotBlur(newValue);
+        drawLine(newValue);
+      }, "posY");
+
+      config.addListener((key, newValue, oldValue) => {
+        if (key == "lenghtpx") {
+          $("#ruler").style.width = newValue;
+        }
+      });
+
+      $(document).ready(() => {
+        $("#odogSpinner").hide();
+
+        $("#imageLoader").on("change", e => {
+          const reader = new FileReader();
+          reader.onload = function(event) {
+            const opttext = '<option data-img-src="' + event.target.result + '" data-img-class="img_picker" value=" ' + event.target.result + '">' + event.target.result + '</option>';
+            $("#imagepicker").find("optgroup[label='self']").append(opttext);
+            $("#imagepicker").imagepicker({
+              changed: function(oldValues, newValues, event) {
+                panda.img = newValues[0] == "" ? null : event.currentTarget.firstElementChild;
+                panda.original_img = panda.img;
+              }
+            });
+          }
+          reader.readAsDataURL(e.target.files[0]);
+        });
+
+        $("#imagepicker").imagepicker({
+          changed: function(oldValues, newValues, event) {
+            panda.img = newValues[0] == "" ? null : event.currentTarget.firstElementChild;
+            panda.original_img = panda.img;
+          }
+        });
+
+        ['#Pcarrier2', '#duty_on2', '#duty_off2', '#angle2', '#ratio2', '#diskDiameter2', '#summationDiameter2', '#pupilDiameter', '#gaussianKernelRadius2', '#lowpassThreshold2', '#length', '#distance', '#zoom2'].forEach(id => {
+          $(id).keyup(function(e) {
+            if (e.keyCode == 13) {
+              $(this).trigger("enterKey");
+            }
+          });
+        });
+
+        $("#PWMform").my({
+          ui: {
+            "#Pcarrier": { bind: "Pcarrier", watch: "#Pcarrier2", delay:150 },
+            "#Pcarrier2": { bind: "Pcarrier", watch: "#Pcarrier", events: ["enterKey.my", "blur.my"] },
+            "#Pcarrier3": { bind: function(data, value, $control) { 
+              if (isNaN(config.length) || isNaN(config.distance)) {
+                return "";
+              } else {
+                return Math.round(config.lengthpx * Math.PI / (360.0 * data.Pcarrier * Math.atan(config.length / (2.0 * config.distance))) * 100) / 100;
+              }
+            }, watch: "#Pcarrier" },
+            "#duty_on": { bind: "duty_on", watch: "#duty_on2", delay:150 },
+            "#duty_on2": { bind: "duty_on", watch: "#duty_on", events: ["enterKey.my", "blur.my"] },
+            "#duty_off": { bind: "duty_off", watch: "#duty_off2", delay:150 },
+            "#duty_off2": { bind: "duty_off", watch: "#duty_off", events: ["enterKey.my", "blur.my"] },
+            "#angle": { bind: "angle", watch: "#angle2", delay:150 },
+            "#angle2": { bind: "angle", watch: "#angle", events: ["enterKey.my", "blur.my"] },
+            "#ratio": { bind: "ratio", watch: "#ratio2", delay:150 },
+            "#ratio2": { bind: "ratio", watch: "#ratio", events: ["enterKey.my", "blur.my"] },
+            "#fgcolor": { bind: "fgcolor", delay: 0 },
+            "#bgcolor": { bind: "bgcolor", delay: 0 },
+            "#mi": { bind: function(data, value, $control) {
+              return panda.duty_on - panda.duty_off;
+            }, watch: ["#duty_on", "#duty_off"]}
+          },
+        }, panda);
+
+        $("#blurForm").my({
+          ui: {
+            "#diskDiameter": { bind: "diskDiameter", watch: "#diskDiameter2", delay:150 },
+            "#diskDiameter2": { bind: "diskDiameter", watch: "#diskDiameter", events: ["enterKey.my", "blur.my"] },
+            "#diskDiameter3": { bind: function(data, value, $control) {
+              if (isNaN(config.length) || isNaN(config.distance)) {
+                return "";
+              } else {
+                return Math.round(((180.0 / Math.PI) * ((2.0 * Math.atan(config.length / (2.0 * config.distance))) / config.lengthpx) * data.diskDiameter) * 100) / 100;
+              }
+            }, watch: "#diskDiameter" },
+            "#diskDiameter4": { bind: function(data, value, $control) {
+              if (isNaN(config.length) || isNaN(config.distance)) {
+                return "";
+              } else {
+                const b = ((180.0 / Math.PI) * ((2.0 * Math.atan(config.length / (2.0 * config.distance))) / config.lengthpx) * data.diskDiameter);
+                return Math.round(((1000.0 * Math.PI * b) / (180.0 * processing.pupilDiameter)) * 100.0) / 100.0;
+              }
+            }, watch: ["#diskDiameter", "#pupilDiameter"] },
+            "#pupilDiameter": { bind: "pupilDiameter", watch: "#pupilDiameter2", delay: 50 },
+            "#pupilDiameter2": { bind: "pupilDiameter", events: ["enterKey.my", "blur.my"], watch: "#pupilDiameter" },
+            "#gaussianKernelRadius": { bind: "gaussianKernelRadius", watch: "#gaussianKernelRadius2", delay: 50 },
+            "#gaussianKernelRadius2": { bind: "gaussianKernelRadius", watch: "#gaussianKernelRadius", events: ["enterKey.my", "blur.my"] },
+            "#lowpassThreshold": { bind: "lowpassThreshold", watch: "#lowpassThreshold2", delay:150 },
+            "#lowpassThreshold2": { bind: "lowpassThreshold", watch: "#lowpassThreshold", events: ["enterKey.my", "blur.my"] },
+            "#summationDiameter": { bind: "summationDiameter", watch: "#summationDiameter2", delay:150 },
+            "#summationDiameter2": { bind: "summationDiameter", watch: "#summationDiameter", events: ["enterKey.my", "blur.my"] },
+            "#summationDiameter3": { bind: function(data, value, $control) {
+              if (isNaN(config.length) || isNaN(config.distance)) {
+                return "";
+              } else {
+                return Math.round(((180.0 / Math.PI) * ((2.0 * Math.atan(config.length / (2.0 * config.distance))) / config.lengthpx) * data.summationDiameter) * 100) / 100;
+              }
+            }, watch: "#summationDiameter" },
+            "#t1" : { bind: function(data, value, $control) {
+                if (value == 'defocus') {
+                  data.blurType = value;
+                  $control.my('find', '#t1')[0].checked = true;
+                  return value;
+                }
+              }
+            },
+            "#t2" : { bind: function(data, value, $control) {
+                if (value == 'gaussian') {
+                  data.blurType = value;
+                  $control.my('find', '#t2')[0].checked = true;
+                  return value;
+                }
+              }
+            },
+            "#t3" : { bind: function(data, value, $control) {
+                if (value == 'lowpass') {
+                  data.blurType = value;
+                  $control.my('find', '#t3')[0].checked = true;
+                  return value;
+                }
+              }
+            },
+            "#t4" : { bind: function(data, value, $control) {
+                if (value == 'summation') {
+                  data.blurType = value;
+                  $control.my('find', '#t4')[0].checked = true;
+                  return value;
+                }
+              }
+            },
+          },
+        }, processing);
+
+        $("#configForm").my({
+          ui: {
+            "#length": { bind: "length", events: ["enterKey.my", "blur.my"] },
+            "#distance": { bind: "distance", events: ["enterKey.my", "blur.my"] },
+            "#VA": { bind: function(data, value, $control) { return Math.round(180.0 / Math.PI * 2.0 * Math.atan((config.length / 2.0) / config.distance) * 100) / 100; }, watch: '#length' },
+            "#pixelPerDegree": { bind: function(data, value, $control) {
+              return  Math.round(data.lengthpx / (180.0 / Math.PI * 2.0 * Math.atan((config.length / 2.0) / config.distance)) * 100) / 100;
+            }, watch: "#VA"},
+            "#degreePerPixel": { bind: function(data, value, $control) {
+              return  Math.round(((180.0 / Math.PI * 2.0 * Math.atan((config.length / 2.0) / config.distance)) / data.lengthpx) * 1000) / 1000;
+            }, watch: "#VA"}
+          },
+        }, config);
+
+        $("#zoomForm").my({
+          ui: {
+            "#zoom": { bind: "zoom", watch: "#zoom2", delay:150 },
+            "#zoom2": { bind: "zoom", watch: "#zoom", events: ["enterKey.my", "blur.my"] }
+          }
+        }, panda);
+
+        $("#lockZoomForm").my({
+          ui: {
+            "#lockZoom": { bind: function(data, value, $control) {
+                data.lock_zoom = (Array.isArray(value) && value.length > 0 && value[0] == "on");
+              } 
+            }
+          }
+        }, config);
+
+        config.addListener((key, newValue, oldValue) => {
+          $("#zoomForm").my("disabled", newValue);
+        }, "lock_zoom");
+
+        $("#PWMform").my("disabled", true);
+        $("#blurForm").my("disabled", true);
+
+        $('#overlayenabled').on('change', (event) => {
+          ['#signalCanvasOverlay', '#pwmCanvasOverlay', '#blurCanvasOverlay'].forEach((id) => {
+            if (event.currentTarget.checked) {
+              $(id).show();
+            } else {
+              $(id).hide();
+            }
+          });
+        });
+
+        $('#signalFTPlot').contextMenu(contextMenu, { triggerOn: 'contextmenu' });
+        $('#pwmFTPlot').contextMenu(contextMenu, { triggerOn: 'contextmenu' });
+        $('#blurFTPlot').contextMenu(contextMenu, { triggerOn: 'contextmenu' });
+        $('#signalFourierPlot').contextMenu(contextMenu, { triggerOn: 'contextmenu' });
+        $('#pwmFourierPlot').contextMenu(contextMenu, { triggerOn: 'contextmenu' });
+        $('#blurFourierPlot').contextMenu(contextMenu, { triggerOn: 'contextmenu' });
+
+
+        $('#pwmAmplitudesTable').DataTable( {
+          "paging": false,
+          "ordering": false,
+          "info": false,
+          "searching": false,
+          "autoWidth": false,
+          columns: [
+            { title: "" },
+            { title: "a<sub>0</sub>" },
+            { title: "a<sub>1</sub>" },
+            { title: "a<sub>2</sub>" },
+            { title: "a<sub>3</sub>" },
+            { title: "a<sub>4</sub>" },
+            { title: "a<sub>5</sub>" },
+            { title: "a<sub>6</sub>" },
+            { title: "a<sub>7</sub>" },
+            { title: "a<sub>8</sub>" },
+            { title: "a<sub>9</sub>" }
+          ]
+        });
+      });
+
+      function blur() {
+        if (processing.blurType == 'defocus') {
+          lensBlur(processing.diskDiameter);
+        } else if (processing.blurType == 'gaussian') {
+          gaussianBlur(processing.gaussianKernelRadius);
+        } else if (processing.blurType == 'summation') {
+          summationBlur(processing.summationDiameter);
+        } else if (processing.blurType == 'lowpass') {
+          lowPass(processing.lowpassThreshold);
+        }
+      }
+
+      function lensBlur(radius) {
+        const pwmId = getImageData('pwmCanvas');
+
+        if (radius > 0) {
+          const ctx = blurCanvas.getContext("2d");
+          ctx.imageSmoothingEnabled = false;
+
+          const id = ctx.createImageData(blurCanvas.width, blurCanvas.height);
+          const result = new Array(id.data.length);
+          const pwmData = pwmId.data;
+
+          for (c = 0; c < 3; c++) {
+            const data = pwmData.filter((v, i, a) => i % 4 == c);
+            const data2 = new Array(data.length);
+            Fourier.transform(data, data2);
+
+            const data3 = aperture(blurCanvas.width, blurCanvas.height, radius);
+            const data4 = new Array(data.length);
+            Fourier.transform(data3, data4);
+
+            const data5 = data2.map((v, i, arr) => v.times(data4[i]));
+
+            var data6 = new Array(data5.length);
+            Fourier.invert(data5, data6);
+
+            data6 = Fourier.unshift(data6, [blurCanvas.width, blurCanvas.height]);
+            for (y = 0, y2 = blurCanvas.height-1 ; y < blurCanvas.height / 2; y++, y2--) {
+              for (x = 0; x < blurCanvas.width / 2; x++) {
+                const i1 = y * blurCanvas.width + x;
+                const i2 = y2 * blurCanvas.width + x;
+                const temp = data6[i2];
+                data6[i2] = data6[i1];
+                data6[i1] = temp;
+              }
+            }
+
+            for (i = 0, j = 0; i < result.length; i+=4, j++) {
+              result[i+c] = data6[j];
+            }
+          }
+
+          normalize(result)
+            .map(v => Math.round(v * 255))
+            .map((v, i, arr) => i % 4 == 3 ? 255 : v)
+            .forEach((v, i, arr) => id.data[i] = v)
+          ;
+
+          ctx.putImageData(id, 0, 0);
+        } else {
+          putImageData('blurCanvas', pwmId);
+        }
+      }
+
+      function gaussianBlur(radius) {
+        putImageData('blurCanvas', getImageData('pwmCanvas'));
+          //blurRGBA(src.data, blurCanvas.width, blurCanvas.height, processing.blur);
+          //blurCanvas.getContext("2d").putImageData(src, 0, 0);
+
+        if (radius > 0) {
+          stackBlurCanvasRGBA("blurCanvas", 0, 0, pwmCanvas.width, pwmCanvas.height, radius);
+        }
+      }
+
+      function summationBlur(diameter) {
+        const radius = diameter / 2;
+        const id = blurCanvas.getContext("2d").createImageData(blurCanvas.width, blurCanvas.height);
+        const data3 = new Int32Array(id.data.length);
+
+        const data = getImageData('pwmCanvas').data;
+
+        const r2 = radius * radius;
+        const indices = [];
+        for (y = -radius; y <= radius; y++) {
+          for (x = -radius; x <= radius; x++) {
+            if (x*x + y*y <= r2) {
+              indices.push((y * blurCanvas.width + x) * 4);
+            }
+          }
+        }
+        for (i = 0; i < data.length; i+=4) {
+          indices
+            .map(v => i + v)
+            .filter(v => {
+              const vv = v / 4;
+              const y = vv / blurCanvas.width;
+              const x = vv % blurCanvas.width;
+              return y >= radius && y < pwmCanvas.height-radius && x >= radius && x < pwmCanvas.width-radius;
+            })
+            .forEach(v => {
+              data3[i+0] += data[v+0];
+              data3[i+1] += data[v+1];
+              data3[i+2] += data[v+2];
+            });
+        }
+
+        const factor = 255.0 / data3.reduce((a, b) => Math.max(a, b));
+        for (i = 0; i < data.length; i+=4) {
+          id.data[i+0] = Math.round(data3[i+0] * factor);
+          id.data[i+1] = Math.round(data3[i+1] * factor);
+          id.data[i+2] = Math.round(data3[i+2] * factor);
+          id.data[i+3] = 255;
+        }
+        
+        putImageData('blurCanvas', id);
+      }
+
+      function lowPass(threshold) {
+        const id = blurCanvas.getContext("2d").createImageData(blurCanvas.width, blurCanvas.height);
+
+        const data = getImageData('pwmCanvas').data;
+
+        for (c = 0; c < 3; c++) {
+          const data2 = new Array(data.length/4);
+          Fourier.transform(data.filter((v, i, arr) => i % 4 == c), data2);
+
+          const data3 = Fourier.shift(data2, [blurCanvas.width, blurCanvas.height]);
+          Fourier.filter(data3, [blurCanvas.width, blurCanvas.height], 0, threshold);
+
+          const data4 = Fourier.unshift(data3, [blurCanvas.width, blurCanvas.height]);
+
+          const data5 = new Array(data2.length);
+          Fourier.invert(data4, data5);
+
+          for (i = 0, j = 0; i < id.data.length; i+=4, j++) {
+            id.data[i+c] = data5[j];
+          }
+        }
+
+        for (i = 3; i < id.data.length; i+=4) {
+          id.data[i] = 255;
+        }
+        
+        putImageData('blurCanvas', id);
+      }
+
+      function odog() {
+        $('#odogSpinner').show();
+
+        const id = odogCanvas.getContext("2d").createImageData(odogCanvas.width, odogCanvas.height);
+
+        const data = getImageData('blurCanvas').data;
+
+        $.ajax({
+          type: 'POST',
+          url: 'http://strator.pythonanywhere.com/panda',
+          dataType: 'json',
+//            contentType: 'application/json; charset=utf-8',
+          data: {
+            data: JSON.stringify({ 
+              img: data,
+              width: blurCanvas.width,
+              height: blurCanvas.height,
+              ppd: config.lengthpx / (180.0 / Math.PI * 2.0 * Math.atan((config.length / 2.0) / config.distance))
+            })
+          },
+          success: function(response) {
+            response.forEach((v, i, arr) => id.data[i] = v);
+            putImageData('odogCanvas', id);
+            $('#odogSpinner').hide();
+          },
+          error: function(jqXHR, status, error) {
+            alert(status + ": " + error);
+          }
+        });
+      }
+
+      function plotCarrierSignal(y) {
+        const srcData = signalCanvas.getContext('2d').getImageData(0, y, signalCanvas.width, 1).data
+        const srcDataY = Array.from(
+                          srcData
+                            .filter((v, i, arr) => i % 4 == 0)
+                            .map((v, i, arr) => 1.0 - v / 255.0)
+                        )
+        ;
+
+        const shift = yshift(y, panda.Pcarrier, panda.ratio, panda.angle);
+        const carrier = Array.range(signalCanvas.width).map(x => carrier_shifted_scaled(x, 1.0/panda.Pcarrier, shift, panda.duty_on/100.0, panda.duty_off/100.0));
+
+        const traces = [
+          newTrace(carrier, "rgb(0, 0, 255)", 1),
+          newTrace(srcDataY, "rgb(255, 0, 0)", 1)
+        ];
+        Plotly.newPlot('carrierSignalPlot', traces, plotLayout(signalCanvas.width, 50), PLOT_CONFIG);
+      }
+
+      function plotPWM(y) {
+        const data = signalCanvas.getContext('2d').getImageData(0, y, signalCanvas.width, 1).data;
+        const shift = yshift(y, panda.Pcarrier, panda.ratio, panda.angle);
+        const trace = newTrace(Array.from(data.filter((s, i, arr) => i % 4 == 0).map((s, i, arr) => 1-s/255).map((s, x, arr) => pwm(s, x, 1.0/panda.Pcarrier, shift, panda.duty_on/100.0, panda.duty_off/100.0))), "rgb(0, 0, 0)", 1);
+
+        Plotly.newPlot('pwmPlot', [trace], plotLayout(signalCanvas.width, 50), PLOT_CONFIG);
+      }
+
+      function plotSignal(y) {
+        const data = signalCanvas.getContext("2d").getImageData(0, y, signalCanvas.width, 1).data;
+        const trace = newTrace(Array.from(data.filter((s, i, arr) => i % 4 == 0)).map((v, x, arr) => 255.0-v).map((v, x, arr) => v/255.0), "rgb(255, 0, 0)", 1);
+
+        Plotly.newPlot('signalPlot', [trace], plotLayout(signalCanvas.width, 50), PLOT_CONFIG);
+      }
+
+      function plotBlur(y) {
+        const data = blurCanvas.getContext("2d").getImageData(0, y, blurCanvas.width, 1).data;
+
+        const data2 = [...Array(data.length/4).keys()]
+                        .map(i => 4 * i)
+                        .map(i => 1 - (data[i] + data[i+1] + data[i+2]) / 3 / 255)
+        ;
+        
+//        const trace = newTrace(Array.from(data.filter((s, i, arr) => i % 4 == 0)).map((v, x, arr) => 255.0-v).map((v, x, arr) => v/255.0), "rgb(0, 0, 0)", 1);
+        const trace = newTrace(data2, "rgb(255, 0, 0)", 1);
+
+        const data3 = signalCanvas.getContext("2d").getImageData(0, y, signalCanvas.width, 1).data;
+        const trace3 = newTrace(Array.from(data3.filter((s, i, arr) => i % 4 == 0)).map((v, x, arr) => 255.0-v).map((v, x, arr) => v/255.0), "rgb(0, 0, 0)", 1);
+
+        Plotly.newPlot('blurPlot', [trace3, trace], plotLayout(blurCanvas.width, 50, [0,1]), PLOT_CONFIG);
+      }
+
+      function clear() {
+        [
+          '#signalCanvas',
+          '#pwmCanvas',
+          '#blurCanvas'
+        ].forEach(id => $(id).getContext('2d').clearRect(0, 0, $(id).width, $(id).height));
+
+        [
+          'carrierSignalPlot',
+          'pwmPlot',
+          'signalPlot',
+          'blurPlot',
+          'signalFourierPlot',
+          'pwmFourierPlot',
+          'blurFourierPlot'
+        ].forEach(id => Plotly.purge(id))
+      }
+
+      function drawPWM() {
+        const pwmCtx = document.getElementById('pwmCanvas').getContext('2d');
+        pwmCtx.imageSmoothingEnabled = false;
+        pwmCtx.fillStyle = "rgba(0, 0, 0, 255)";
+        
+        const srcData = getImageData('signalCanvas').data;
+        const pwmData = pwmCtx.createImageData(signalCanvas.width, signalCanvas.height);
+
+        const fg = hexToRgb(panda.fgcolor);
+        const bg = hexToRgb(panda.bgcolor);
+
+        for (y = 0; y < signalCanvas.height; y++) {
+          const shift = yshift(y, panda.Pcarrier, panda.ratio, panda.angle);
+
+          for (x = 0; x < signalCanvas.width; x++) {
+            const i = (y * signalCanvas.width + x) * 4;
+            const s = 1 - srcData[i]/255;
+            
+            const p = pwm(s, x, 1.0/panda.Pcarrier, shift, panda.duty_on/100.0, panda.duty_off/100.0);
+
+            const c = (p == 0) ? bg : fg;
+            pwmData.data[i + 0] = c.r;
+            pwmData.data[i + 1] = c.g;
+            pwmData.data[i + 2] = c.b;
+//            pwmData.data[i + 3] = s == 0 && p == 1 ? 255 : Math.round(255*0.6);
+            pwmData.data[i + 3] = 255;
+          }
+        }
+
+        pwmCtx.putImageData(pwmData, 0, 0);
+      }
+
+      function drawLine(y) {
+        ['signalCanvasOverlay', 'pwmCanvasOverlay', 'blurCanvasOverlay'].forEach(id => {
+          const c = document.getElementById(id); 
+          const ctx = c.getContext("2d");
+
+          ctx.clearRect(0, 0, c.width, c.height)
+          ctx.strokeStyle = "#FF0000";
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(c.width, y);
+          ctx.stroke();
+        });
+      }
+
+      function ftAmplitudes(data, panda, id) {
+        var width = 512;
+
+
+        const amplitudeList = [panda.duty_on, panda.duty_off].map((d, i, arr) => {
+          const amplitudes = Array
+                              .range(9)
+                              .map(n => n+1).map(n => (2 * 1) / (n * Math.PI) * Math.sin(n * Math.PI * d/100))
+                              .map(a => Math.abs(Math.round(a*1000)/1000))
+          ;
+          amplitudes.unshift(Math.round((1 * (d/100))*100)/100);
+          amplitudes.unshift("Duty<sub>" + (i == 0 ? 'on' : 'off') + "</sub>");
+
+          return amplitudes;
+        });
+
+        amplitudeList.push(amplitudeList[0].map((v, i, arr) => i == 0 ? "Avg" : Math.round((v + amplitudeList[1][i]) / 2.0 * 1000) / 1000));
+
+        const xy90 = new Array(width/2);
+
+        for (y = width/2; y < width; y++) {
+          const ys = y - width/2;
+          const i = y * width + width/2;
+
+          xy90[ys] = data[i];
+        }
+
+        const ffta = Array.range(10).map(v => Math.floor(v * width / panda.Pcarrier)).map(i => xy90[i]);
+        ffta.unshift("FFT");
+        amplitudeList.push(ffta);
+
+        const table = $(id).DataTable();
+        table.rows().remove();
+
+        amplitudeList.forEach(amplitudes => table.row.add(amplitudes).invalidate());
+        
+        table.draw();
+      }
+    </script>
+  </head>
+  <body>
+    <div id="spinner"><div class="sk-fading-circle"><div class="sk-circle1 sk-circle"></div><div class="sk-circle2 sk-circle"></div><div class="sk-circle3 sk-circle"></div><div class="sk-circle4 sk-circle"></div><div class="sk-circle5 sk-circle"></div><div class="sk-circle6 sk-circle"></div><div class="sk-circle7 sk-circle"></div><div class="sk-circle8 sk-circle"></div><div class="sk-circle9 sk-circle"></div><div class="sk-circle10 sk-circle"></div><div class="sk-circle11 sk-circle"></div><div class="sk-circle12 sk-circle"></div></div></div>
+    <table border="0">
+      <tr valign="top">
+        <td>
+          <form id="picker" action="javascript:void(0);">
+              <fieldset>
+                <legend>Image</legend>
+                <select id="imagepicker" class="image-picker">
+                  <option value=""></option>
+                  <optgroup label="Predefined">
+                    <option data-img-src="images/empty.png" data-img-class="img_picker" value="images/empty.png">Empty</option>
+                    <option data-img-src="images/panda.png" data-img-class="img_picker" value="images/panda.png">Panda</option>
+                    <option data-img-src="images/smiley.png" data-img-class="img_picker" value="images/smiley.png">Smiley</option>
+                    <option data-img-src="images/owl.png" data-img-class="img_picker" value="images/owl.png">Smiley</option>
+                    <option data-img-src="images/stripes.png" data-img-class="img_picker" value="images/stripes.png">Smiley</option>
+                  </optgroup>
+                  <optgroup label="Uploaded">
+                  </optgroup>
+                </select>
+                <button class="uploadButton" onclick="imageLoader.click()" ><input type="file" id="imageLoader" name="imageLoader" style="display:none"/>Upload</button>
+              </fieldset>
+            </form>
+        </td>
+        <td valign="top">
+          <form id="PWMform" action="javascript:void(0);">
+            <table border="0" width="100%" cellpadding="0" cellspacing="0">
+              <tr valign="top">
+                <td>
+                  <fieldset>
+                    <legend>Pulse width modulation</legend>
+                    <p>
+                      <label for="Pcarrier">P<sub>carrier</sub>: </label><input type="number" id="Pcarrier2"/> px <input type="number" readonly id="Pcarrier3"/> cpd<br/>
+                      <input id="Pcarrier" type="range" orient="vertical" min="10" max = "100" step="1"/>
+                    </p>
+                    <p>
+                      <label for="duty_on">Duty<sub>on</sub>: </label><input type="number" id="duty_on2"/> %<br/>
+                      <input id="duty_on" type="range" orient="vertical" min="0" max="100" step="1"/>
+                    </p>
+                    <p>
+                      <label for="duty_off">Duty<sub>off</sub>: </label><input type="number" id="duty_off2"/> %<br/>
+                      <input id="duty_off" type="range" orient="vertical" min="0" max="100" step="1"/>
+                    </p>
+                    <p>
+                      <label for="mi">Modulation Index</label>: <input type="number" id="mi" readonly> %
+                    </p>
+                  </fieldset>
+                </td>
+                <td>
+                  <fieldset>
+                    <legend>Tile settings</legend>
+                    <p>
+                      <label for="angle">Angle: </label><input type="number" id="angle2"/> °<br/>
+                      <input id="angle" type="range" orient="vertical" min="0" max="160" step="1"/>
+                    </p>
+                    <p>
+                      <label for="ratio">h/w-ratio: </label><input type="number" id="ratio2"/><br/>
+                      <input id="ratio" type="range" orient="vertical" min="1" max="8" step="1"/>
+                    </p>
+                    <p>
+                      <label for="fgcolor">Foreground (on): </label><input type="color" id="fgcolor" value="#000000"><br/>
+                      <label for="bgcolor">Background (off): </label><input type="color" id="bgcolor" value="#ffffff">
+                    </p>
+                  </fieldset>
+                </td>
+              </tr>
+            </table>
+          </form>
+        </td>
+        <td valign="top">
+          <form id="blurForm" action="javascript:void(0);">
+            <fieldset>
+              <legend>Blur</legend>
+              <input id="t1" type="radio" name="blurType" value="defocus" checked="checked">Defocus Blur</input>
+              <input id="t2" type="radio" name="blurType" value="gaussian">Gaussian Blur</input>
+              <input id="t3" type="radio" name="blurType" value="lowpass">Low-pass</input>
+              <input id="t4" type="radio" name="blurType" value="summation">Summation</input>
+              <div class="tabs">
+                <div class="t1">
+                  <label for="diskDiameter">Disk diameter: </label><input type="number" id="diskDiameter2"/> px <input type="number" id="diskDiameter3" readonly/>° &#x2259; <input type="number" id="diskDiameter4" readonly/> D<br/>
+                  <input id="diskDiameter" type="range" min="0" max="50" step="1"/><br/>
+                  <label for="pupilDiameter">Pupil diameter: </label><input type="number" id="pupilDiameter2"> mm<br/>
+                  <input id="pupilDiameter" type="range" min="2" max="8" step="1"/><br/>
+                </div>
+                <div class="t2">
+                  <label for="gaussianKernelRadius">Kernel radius: </label><input type="number" id="gaussianKernelRadius2"/> px<br/>
+                  <input id="gaussianKernelRadius" type="range" min="0" max="150" step="1"/>
+                </div>
+                <div class="t3">
+                  <label for="lowpassThreshold">Cut-off: </label><input type="number" id="lowpassThreshold2"/> px<br/>
+                  <input id="lowpassThreshold" type="range" min="0" max="150" step="1"/>  
+                </div>
+                <div class="t4">
+                  <label for="summationDiameter">Diameter: </label><input type="number" id="summationDiameter2"/> px <input type="number" id="summationDiameter3" readonly/>°<br/>
+                  <input id="summationDiameter" type="range" min="0" max="50" step="1"/>
+                </div>
+              </div>
+            </fieldset>
+          </form>
+        </td>
+      </tr>
+      <tr valign="top">
+        <td>
+          <fieldset>
+            <legend>Source</legend>
+            <div style="height:60px;">
+              <form id="zoomForm" action="javascript:void(0);">
+                <label for="zoom">Zoom: </label><input id="zoom" type="range" orient="vertical" min="5" max="200" step="1"/><input type="number" id="zoom2"/> %<br/>
+              </form>
+              <form id="lockZoomForm" action="javascript:void(0);">
+                <input id="lockZoom" type="checkbox" checked><label for="lockZoom">Lock zoom to spatial frequency</label>
+                <input id="overlayenabled" type="checkbox" checked><label for="overlayenabled">Overlay</label>
+              </form>
+          </div>
+            <div id="signalPlot"></div>
+            <hr/>
+            <div id="signalCanvasParent" class="overlayParent">
+              <canvas id="signalCanvas" class="overlayed"></canvas>
+              <canvas id="signalCanvasOverlay" height="10" class="overlay"></canvas>
+            </div> 
+          </fieldset>
+        </td>
+        <td>
+          <fieldset>
+            <legend>Generated</legend>
+            <div style="height:10px;"></div>
+            <div id="carrierSignalPlot" style="height:50px;"></div>
+            <div id="pwmPlot"></div>
+            <hr/>
+            <div id="pwmCanvasParent" height="10" class="overlayParent">
+              <canvas id="pwmCanvas" height="10" class="overlayed"></canvas>
+              <canvas id="pwmCanvasOverlay" height="10" class="overlay"></canvas>
+            </div>
+          </fieldset>
+        </td>
+        <td>
+          <fieldset>
+            <legend>Blurred</legend>
+            <div style="height:60px;"></div>
+            <div id="blurPlot"></div>
+            <hr/>
+            <div id="blurCanvasParent" height="10" class="overlayParent">
+              <canvas id="blurCanvas" height="10" class="overlayed"></canvas>
+              <canvas id="blurCanvasOverlay" height="10" class="overlay"></canvas>
+            </div>
+          </fieldset>
+        </td>
+      </tr>
+      <tr valign="top">
+        <td>
+          <fieldset>
+            <legend >FFT Source</legend>
+            <div id="signalFTPlot"></div>
+            <hr/>
+            <div id="signalFourierPlot"></div>
+          </fieldset>
+        </td>
+        <td>
+          <fieldset>
+            <legend>FFT Generated</legend>
+            <div id="pwmFTPlot"></div>
+            <hr/>
+            <table id="pwmAmplitudesTable" style="display:none" class="display" width="100%"></table>
+            <hr/>
+            <div id="pwmFourierPlot"></div>
+          </fieldset>
+        </td>
+        <td>
+          <fieldset>
+            <legend>FFT Blurred</legend>
+            <div id="blurFTPlot"></div>
+            <hr/>
+            <div id="blurFourierPlot"></div>
+          </fieldset>
+        </td>
+      </tr>
+      <tr>
+        <td></td>
+        <td></td>
+        <td>
+          <fieldset>
+            <legend><a href="javascript:odog();">ODOG</a></legend>
+            <div id="odogCanvasParent" height="10" class="overlayParent">
+              <canvas id="odogCanvas" height="10" class="overlayed"></canvas>
+              <div id="odogSpinner" style="position:absolute; left:0px; top:0px; z-index:20;"><div class="sk-fading-circle"><div class="sk-circle1 sk-circle"></div><div class="sk-circle2 sk-circle"></div><div class="sk-circle3 sk-circle"></div><div class="sk-circle4 sk-circle"></div><div class="sk-circle5 sk-circle"></div><div class="sk-circle6 sk-circle"></div><div class="sk-circle7 sk-circle"></div><div class="sk-circle8 sk-circle"></div><div class="sk-circle9 sk-circle"></div><div class="sk-circle10 sk-circle"></div><div class="sk-circle11 sk-circle"></div><div class="sk-circle12 sk-circle"></div></div></div>
+            </div>
+          </fieldset>
+        </td>
+      </tr>
+      <tr>
+        <td colspan="3">
+          <form id="configForm" action="javascript:void(0);">
+            <fieldset>
+              <legend>Screen config</legend>
+              <table width="100%">
+                <tr>
+                  <td>
+                      <p>
+                        <label for="length">Length: </label><input type="number" id="length"/> cm
+                      </p>
+                      <p>
+                        <label for="distance">Distance: </label><input type="number" id="distance"/> cm        
+                      </p>
+                  </td>
+                  <td>
+                      <div id="ruler" style="width:512px; height:2px; background-color: #ff0000"></div>
+                  </td>
+                  <td>
+                      <label for="VA">Visual angle: </label><input type="number" id="VA" readonly/>°<br/>
+                      <label for="pixelPerDegree">Pixel per degree: </label><input type="number" id="pixelPerDegree" readonly/> px/°<br/>
+                      <label for="degreePerPixel">Degree per pixel: </label><input type="number" id="degreePerPixel" readonly/> °/px
+                  </td>
+                </tr>
+              </table>
+            </fieldset>
+          </form>
+        </td>
+      </tr>
+    </table>
+  </body> 
+</html>
