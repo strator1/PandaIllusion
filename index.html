@@ -261,7 +261,7 @@
           const reader = new FileReader();
           reader.onload = function(event) {
             const opttext = '<option data-img-src="' + event.target.result + '" data-img-class="img_picker" value=" ' + event.target.result + '">' + event.target.result + '</option>';
-            $("#imagepicker").find("optgroup[label='self']").append(opttext);
+            $("#imagepicker").find("optgroup[label='Uploaded']").append(opttext);
             $("#imagepicker").imagepicker({
               changed: function(oldValues, newValues, event) {
                 panda.img = newValues[0] == "" ? null : event.currentTarget.firstElementChild;
