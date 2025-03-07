@@ -1,5 +1,6 @@
 function triangle(x, frequency, shift) {
-    return 1.0/Math.PI * Math.asin(Math.sin(2.0 * Math.PI * frequency * (x - shift))) + 0.5;
+    epsilon = 1e-6;  // Small offset to prevent exact rounding errors
+    return 1.0/Math.PI * Math.asin(Math.sin(2.0 * Math.PI * frequency * (x - shift) + epsilon)) + 0.5;
 }
 
 function carrier_shifted_scaled(x, frequency, shift, duty_on, duty_off) {
